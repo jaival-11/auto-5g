@@ -63,6 +63,7 @@ class Smart5GService : Service() {
     private var hotspotTriggerEnabled = true
     private var hotspotMode = HotspotMode.SMART
     private var hotspotOnly5G = false
+    private var lastAppliedMode: Int? = null
 
     private val systemReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -108,6 +109,7 @@ class Smart5GService : Service() {
         }
 
         startForegroundServiceNotification()
+        applyTargetMode(NetworkModeController.NETWORK_MODE_4G_PREFERRED, force = true)
         return START_STICKY
     }
 
@@ -175,7 +177,7 @@ class Smart5GService : Service() {
                 repository.highMbpsThresholdFlow,
                 repository.lowMbpsThresholdFlow
             ) { flows: Array<Any?> ->
-                masterEnabled = flows[0] as Boolean
+                val newMaster = flows[0] as Boolean
                 permissionMode = flows[1] as PermissionMode
                 displayTriggerEnabled = flows[2] as Boolean
                 displayOffDelaySecs = flows[3] as Int
@@ -183,11 +185,18 @@ class Smart5GService : Service() {
                 smartSwitchingEnabled = flows[5] as Boolean
                 highMbpsThreshold = flows[6] as Double
                 lowMbpsThreshold = flows[7] as Double
-            }.collectLatest {
+                newMaster
+            }.collectLatest { isMaster ->
+                val wasEnabled = masterEnabled
+                masterEnabled = isMaster
                 if (!masterEnabled) {
                     stopSelf()
                 } else {
-                    evaluateAndApplyNetworkMode()
+                    if (!wasEnabled) {
+                        applyTargetMode(NetworkModeController.NETWORK_MODE_4G_PREFERRED, force = true)
+                    } else {
+                        evaluateAndApplyNetworkMode()
+                    }
                 }
             }
         }
@@ -309,10 +318,12 @@ class Smart5GService : Service() {
         applyTargetMode(NetworkModeController.NETWORK_MODE_5G_PREFERRED)
     }
 
-    private fun applyTargetMode(mode: Int) {
-        val current = NetworkModeController.getCurrentNetworkMode(applicationContext)
-        if (current != mode) {
-            NetworkModeController.setNetworkMode(applicationContext, mode, permissionMode)
+    private fun applyTargetMode(mode: Int, force: Boolean = false) {
+        if (force || lastAppliedMode != mode) {
+            val success = NetworkModeController.setNetworkMode(applicationContext, mode, permissionMode)
+            if (success || force) {
+                lastAppliedMode = mode
+            }
         }
     }
 

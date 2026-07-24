@@ -140,7 +140,7 @@ fun OnboardingScreen(
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = adbCommand,
-                            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = androidx.compose.ui.text.font.GenericFontFamily("monospace")),
                             color = MaterialTheme.colorScheme.primary
                         )
                         Spacer(modifier = Modifier.height(10.dp))
