@@ -50,12 +50,38 @@ DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
 # Use the maximum available byte code version but no more than needed
 # Max standard version supported by current Gradle is Java 21
 
-# Find java
+warn () {
+    echo "$*"
+}
+
+die () {
+    echo
+    echo "$*"
+    echo
+    exit 1
+}
+
+# OS specific support. $var _must_ be set to true or false.
+cygwin=false
+msys=false
+darwin=false
+nonstop=false
+case "`uname`" in
+  CYGWIN* ) cygwin=true ;;
+  Darwin* ) darwin=true ;;
+  MINGW* ) msys=true ;;
+  NONSTOP* ) nonstop=true ;;
+esac
+
+CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
+
+# Determine the Java command to use to start the JVM.
 if [ -n "$JAVA_HOME" ] ; then
     if [ -x "$JAVA_HOME/jre/sh/java" ] ; then
-        JAVACMD="$JAVA_HOME/jre/sh/java"
+        # IBM Java on AIX
+        JAVACMD=$JAVA_HOME/jre/sh/java
     else
-        JAVACMD="$JAVA_HOME/bin/java"
+        JAVACMD=$JAVA_HOME/bin/java
     fi
     if [ ! -x "$JAVACMD" ] ; then
         die "ERROR: JAVA_HOME is set to an invalid directory: $JAVA_HOME
@@ -64,24 +90,26 @@ Please set the JAVA_HOME variable in your environment to match the
 location of your Java installation."
     fi
 else
-    JAVACMD="java"
+    JAVACMD=java
     which java >/dev/null 2>&1 || die "ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH.
 
 Please set the JAVA_HOME variable in your environment to match the
 location of your Java installation."
 fi
 
-# Increase default stack size for modern JDKs
-JAVA_OPTS="$JAVA_OPTS -XX:MaxMetaspaceSize=384m"
-
 # Escape application args
-for arg in "$@"; do
-    case "$arg" in
-        *\ *) arg="\"$arg\"" ;;
-    esac
-    APP_ARGS="$APP_ARGS $arg"
+for arg do
+    val=`echo "$arg" | sed -e 's/\\\/\\\\\\\\/g' -e 's/"/\\\"/g'`
+    APP_ARGS="$APP_ARGS \"$val\""
 done
 
-CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
+# Collect all arguments for the java command.
+set -- \
+    "-Dorg.gradle.appname=$APP_BASE_NAME" \
+    -classpath "$CLASSPATH" \
+    org.gradle.wrapper.GradleWrapperMain \
+    "$@"
 
-exec "$JAVACMD" $JAVA_OPTS $DEFAULT_JVM_OPTS -classpath "$CLASSPATH" org.gradle.wrapper.GradleWrapperMain $APP_ARGS
+eval "set -- $DEFAULT_JVM_OPTS $JAVA_OPTS $GRADLE_OPTS \"\$@\""
+
+exec "$JAVACMD" "$@"
