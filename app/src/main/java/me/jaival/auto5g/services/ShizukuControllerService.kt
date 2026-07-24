@@ -81,36 +81,26 @@ class ShizukuControllerService() : IShizukuController.Stub() {
             return false
         }
         
-        // Get network type bitmasks from Android TelephonyManager constants
-        private val NETWORK_TYPE_BITMASK_GSM by lazy { getBitmaskConstant("NETWORK_TYPE_BITMASK_GSM") }
-        private val NETWORK_TYPE_BITMASK_GPRS by lazy { getBitmaskConstant("NETWORK_TYPE_BITMASK_GPRS") }
-        private val NETWORK_TYPE_BITMASK_EDGE by lazy { getBitmaskConstant("NETWORK_TYPE_BITMASK_EDGE") }
-        private val NETWORK_TYPE_BITMASK_UMTS by lazy { getBitmaskConstant("NETWORK_TYPE_BITMASK_UMTS") }
-        private val NETWORK_TYPE_BITMASK_CDMA by lazy { getBitmaskConstant("NETWORK_TYPE_BITMASK_CDMA") }
-        private val NETWORK_TYPE_BITMASK_EVDO_0 by lazy { getBitmaskConstant("NETWORK_TYPE_BITMASK_EVDO_0") }
-        private val NETWORK_TYPE_BITMASK_EVDO_A by lazy { getBitmaskConstant("NETWORK_TYPE_BITMASK_EVDO_A") }
-        private val NETWORK_TYPE_BITMASK_1xRTT by lazy { getBitmaskConstant("NETWORK_TYPE_BITMASK_1xRTT") }
-        private val NETWORK_TYPE_BITMASK_HSDPA by lazy { getBitmaskConstant("NETWORK_TYPE_BITMASK_HSDPA") }
-        private val NETWORK_TYPE_BITMASK_HSUPA by lazy { getBitmaskConstant("NETWORK_TYPE_BITMASK_HSUPA") }
-        private val NETWORK_TYPE_BITMASK_HSPA by lazy { getBitmaskConstant("NETWORK_TYPE_BITMASK_HSPA") }
-        private val NETWORK_TYPE_BITMASK_EVDO_B by lazy { getBitmaskConstant("NETWORK_TYPE_BITMASK_EVDO_B") }
-        private val NETWORK_TYPE_BITMASK_LTE by lazy { getBitmaskConstant("NETWORK_TYPE_BITMASK_LTE") }
-        private val NETWORK_TYPE_BITMASK_EHRPD by lazy { getBitmaskConstant("NETWORK_TYPE_BITMASK_EHRPD") }
-        private val NETWORK_TYPE_BITMASK_HSPAP by lazy { getBitmaskConstant("NETWORK_TYPE_BITMASK_HSPAP") }
-        private val NETWORK_TYPE_BITMASK_TD_SCDMA by lazy { getBitmaskConstant("NETWORK_TYPE_BITMASK_TD_SCDMA") }
-        private val NETWORK_TYPE_BITMASK_LTE_CA by lazy { getBitmaskConstant("NETWORK_TYPE_BITMASK_LTE_CA") }
-        private val NETWORK_TYPE_BITMASK_IWLAN by lazy { getBitmaskConstant("NETWORK_TYPE_BITMASK_IWLAN") }
-        private val NETWORK_TYPE_BITMASK_NR by lazy { getBitmaskConstant("NETWORK_TYPE_BITMASK_NR") }
-        
-        private fun getBitmaskConstant(name: String): Long {
-            return try {
-                Class.forName("android.telephony.TelephonyManager")
-                    .getDeclaredField(name)
-                    .getLong(null)
-            } catch (e: Exception) {
-                0L
-            }
-        }
+        // Get network type bitmasks from Android TelephonyManager constants (1L shl (NETWORK_TYPE - 1))
+        private const val NETWORK_TYPE_BITMASK_GPRS = 1L shl (1 - 1)      // 1L
+        private const val NETWORK_TYPE_BITMASK_EDGE = 1L shl (2 - 1)      // 2L
+        private const val NETWORK_TYPE_BITMASK_UMTS = 1L shl (3 - 1)      // 4L
+        private const val NETWORK_TYPE_BITMASK_CDMA = 1L shl (4 - 1)      // 8L
+        private const val NETWORK_TYPE_BITMASK_EVDO_0 = 1L shl (5 - 1)    // 16L
+        private const val NETWORK_TYPE_BITMASK_EVDO_A = 1L shl (6 - 1)    // 32L
+        private const val NETWORK_TYPE_BITMASK_1xRTT = 1L shl (7 - 1)     // 64L
+        private const val NETWORK_TYPE_BITMASK_HSDPA = 1L shl (8 - 1)     // 128L
+        private const val NETWORK_TYPE_BITMASK_HSUPA = 1L shl (9 - 1)     // 256L
+        private const val NETWORK_TYPE_BITMASK_HSPA = 1L shl (10 - 1)     // 512L
+        private const val NETWORK_TYPE_BITMASK_EVDO_B = 1L shl (12 - 1)    // 2048L
+        private const val NETWORK_TYPE_BITMASK_LTE = 1L shl (13 - 1)       // 4096L
+        private const val NETWORK_TYPE_BITMASK_EHRPD = 1L shl (14 - 1)     // 8192L
+        private const val NETWORK_TYPE_BITMASK_HSPAP = 1L shl (15 - 1)     // 16384L
+        private const val NETWORK_TYPE_BITMASK_GSM = 1L shl (16 - 1)       // 32768L
+        private const val NETWORK_TYPE_BITMASK_TD_SCDMA = 1L shl (17 - 1) // 65536L
+        private const val NETWORK_TYPE_BITMASK_IWLAN = 1L shl (18 - 1)    // 131072L
+        private const val NETWORK_TYPE_BITMASK_LTE_CA = 1L shl (19 - 1)   // 262144L
+        private const val NETWORK_TYPE_BITMASK_NR = 1L shl (20 - 1)       // 524288L
         
         // Combined bitmasks for common network classes
         private fun get2GBitmask(): Long = NETWORK_TYPE_BITMASK_GSM or NETWORK_TYPE_BITMASK_GPRS or 
