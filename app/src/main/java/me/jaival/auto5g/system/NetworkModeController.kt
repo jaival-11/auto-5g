@@ -2,11 +2,14 @@ package me.jaival.auto5g.system
 
 import android.content.Context
 import android.provider.Settings
+import android.util.Log
 import me.jaival.auto5g.data.PermissionMode
 import rikka.shizuku.Shizuku
 import java.io.OutputStream
 
 object NetworkModeController {
+
+    private const val TAG = "Auto5G-NetCtrl"
 
     const val NETWORK_MODE_4G_PREFERRED = 9  // LTE/GSM/WCDMA
     const val NETWORK_MODE_5G_PREFERRED = 26 // NR/LTE/GSM/WCDMA
@@ -45,25 +48,30 @@ object NetworkModeController {
     }
 
     fun setNetworkMode(context: Context, mode: Int, permissionMode: PermissionMode): Boolean {
+        Log.d(TAG, "setNetworkMode requested with mode: $mode, permissionMode: $permissionMode")
         return when (permissionMode) {
             PermissionMode.SHIZUKU_CONTINUOUS -> {
                 setNetworkModeViaShizuku(context, mode)
             }
             PermissionMode.SHIZUKU_ONETIME, PermissionMode.MANUAL_ADB -> {
+                Log.w(TAG, "Legacy setting path used!")
                 setNetworkModeViaSettingsGlobal(context, mode)
             }
         }
     }
 
     fun getCurrentNetworkMode(context: Context): Int {
+        Log.d(TAG, "getCurrentNetworkMode called")
         if (cachedShizukuService?.asBinder()?.pingBinder() == true) {
             try {
                 val subManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? android.telephony.SubscriptionManager
                 val activeSubId = subManager?.activeSubscriptionInfoList?.firstOrNull()?.subscriptionId 
                     ?: android.telephony.SubscriptionManager.getDefaultSubscriptionId()
                 val shizukuMode = cachedShizukuService?.getCurrentNetworkMode(activeSubId) ?: -1
+                Log.d(TAG, "getCurrentNetworkMode from Shizuku: $shizukuMode (subId: $activeSubId)")
                 if (shizukuMode != -1) return shizukuMode
             } catch (e: Exception) {
+                Log.e(TAG, "getCurrentNetworkMode via Shizuku failed", e)
                 e.printStackTrace()
             }
         }
@@ -103,22 +111,30 @@ object NetworkModeController {
     private var cachedShizukuService: me.jaival.auto5g.IShizukuController? = null
 
     private fun setNetworkModeViaShizuku(context: Context, mode: Int): Boolean {
-        if (!Shizuku.pingBinder()) return false
+        Log.d(TAG, "setNetworkModeViaShizuku: Checking Shizuku binder ping")
+        if (!Shizuku.pingBinder()) {
+            Log.e(TAG, "Shizuku binder ping failed!")
+            return false
+        }
         var success = false
         
         if (cachedShizukuService?.asBinder()?.pingBinder() == true) {
+            Log.d(TAG, "setNetworkModeViaShizuku: Using cached Shizuku service")
             return try {
                 val subManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? android.telephony.SubscriptionManager
                 val activeSubId = subManager?.activeSubscriptionInfoList?.firstOrNull()?.subscriptionId 
                     ?: android.telephony.SubscriptionManager.getDefaultSubscriptionId()
                 cachedShizukuService?.setNetworkMode(activeSubId, mode)
+                Log.d(TAG, "setNetworkModeViaShizuku: Success via cached service on subId: $activeSubId")
                 true
             } catch (e: Exception) {
+                Log.e(TAG, "setNetworkModeViaShizuku: Exception with cached service", e)
                 e.printStackTrace()
                 false
             }
         }
 
+        Log.d(TAG, "setNetworkModeViaShizuku: Binding new Shizuku service")
         val latch = java.util.concurrent.CountDownLatch(1)
         val args = Shizuku.UserServiceArgs(android.content.ComponentName(context, me.jaival.auto5g.services.ShizukuControllerService::class.java))
             .processNameSuffix("service")
@@ -128,6 +144,7 @@ object NetworkModeController {
         
         val connection = object : android.content.ServiceConnection {
             override fun onServiceConnected(componentName: android.content.ComponentName?, binder: android.os.IBinder?) {
+                Log.d(TAG, "Shizuku service connected")
                 if (binder != null && binder.pingBinder()) {
                     try {
                         val service = me.jaival.auto5g.IShizukuController.Stub.asInterface(binder)
@@ -136,23 +153,30 @@ object NetworkModeController {
                         val activeSubId = subManager?.activeSubscriptionInfoList?.firstOrNull()?.subscriptionId 
                             ?: android.telephony.SubscriptionManager.getDefaultSubscriptionId()
                         
+                        Log.d(TAG, "Setting mode $mode for subId $activeSubId")
                         service.setNetworkMode(activeSubId, mode)
                         success = true
                     } catch (e: Exception) {
+                        Log.e(TAG, "Error while setting network mode in callback", e)
                         e.printStackTrace()
                     }
+                } else {
+                    Log.e(TAG, "Binder is null or dead upon connection")
                 }
                 latch.countDown()
             }
             override fun onServiceDisconnected(componentName: android.content.ComponentName?) {
+                Log.d(TAG, "Shizuku service disconnected")
                 cachedShizukuService = null
             }
         }
         
         try {
             Shizuku.bindUserService(args, connection)
-            latch.await(5, java.util.concurrent.TimeUnit.SECONDS)
+            val awaitSuccess = latch.await(5, java.util.concurrent.TimeUnit.SECONDS)
+            Log.d(TAG, "Latch await result: $awaitSuccess, overall success: $success")
         } catch (e: Exception) {
+            Log.e(TAG, "Exception binding Shizuku service", e)
             e.printStackTrace()
         }
         return success

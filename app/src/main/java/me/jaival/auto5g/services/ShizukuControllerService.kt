@@ -248,7 +248,10 @@ class ShizukuControllerService() : IShizukuController.Stub() {
     @Keep
     constructor(context: Context) : this()
 
+    private val TAG = "Auto5G-ShizukuSvc"
+
     override fun compatibilityCheck(subId: Int): Boolean {
+        android.util.Log.d(TAG, "compatibilityCheck called for subId: $subId")
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 iTelephony.setAllowedNetworkTypesForReason(
@@ -262,35 +265,48 @@ class ShizukuControllerService() : IShizukuController.Stub() {
                     iTelephony.getPreferredNetworkType(subId)
                 )
             }
+            android.util.Log.d(TAG, "compatibilityCheck successful")
             true
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "compatibilityCheck failed", e)
             false
         }
     }
 
     override fun getCurrentNetworkMode(subId: Int): Int {
+        android.util.Log.d(TAG, "getCurrentNetworkMode called for subId: $subId")
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val currentBitmask = iTelephony.getAllowedNetworkTypesForReason(subId, reasonUser)
-                mapBitmaskToNetworkMode(currentBitmask)
+                android.util.Log.d(TAG, "current bitmask for user reason: $currentBitmask")
+                val mode = mapBitmaskToNetworkMode(currentBitmask)
+                android.util.Log.d(TAG, "mapped mode: $mode")
+                mode
             } else {
-                iTelephony.getPreferredNetworkType(subId)
+                val mode = iTelephony.getPreferredNetworkType(subId)
+                android.util.Log.d(TAG, "legacy getPreferredNetworkType: $mode")
+                mode
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "getCurrentNetworkMode failed", e)
             -1
         }
     }
 
     override fun setNetworkMode(subId: Int, networkMode: Int) {
+        android.util.Log.d(TAG, "setNetworkMode called for subId: $subId to mode: $networkMode")
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val networkTypeBitmask = mapNetworkModeToBitmask(networkMode)
+                android.util.Log.d(TAG, "mapped bitmask: $networkTypeBitmask for user reason: $reasonUser")
                 iTelephony.setAllowedNetworkTypesForReason(subId, reasonUser, networkTypeBitmask)
+                android.util.Log.d(TAG, "setAllowedNetworkTypesForReason completed")
             } else {
+                android.util.Log.d(TAG, "using legacy setPreferredNetworkType")
                 iTelephony.setPreferredNetworkType(subId, networkMode)
             }
-        } catch (_: Exception) {
-            // Silently fail
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "setNetworkMode failed", e)
         }
     }
 
