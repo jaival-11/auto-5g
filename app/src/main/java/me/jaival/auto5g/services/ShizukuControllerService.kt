@@ -2,7 +2,6 @@ package me.jaival.auto5g.services
 
 import android.content.Context
 import android.os.Build
-import android.os.ServiceManager
 import androidx.annotation.Keep
 import com.android.internal.telephony.ITelephony
 import me.jaival.auto5g.IShizukuController
@@ -11,7 +10,10 @@ class ShizukuControllerService() : IShizukuController.Stub() {
 
     companion object {
         private val iTelephony by lazy {
-            ITelephony.Stub.asInterface(ServiceManager.getService(Context.TELEPHONY_SERVICE))
+            val serviceManagerClass = Class.forName("android.os.ServiceManager")
+            val getServiceMethod = serviceManagerClass.getMethod("getService", String::class.java)
+            val binder = getServiceMethod.invoke(null, Context.TELEPHONY_SERVICE) as android.os.IBinder
+            ITelephony.Stub.asInterface(binder)
         }
         
         private val reasonUser by lazy {
