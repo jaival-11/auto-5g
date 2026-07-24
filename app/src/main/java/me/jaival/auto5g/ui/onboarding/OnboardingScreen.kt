@@ -140,7 +140,7 @@ fun OnboardingScreen(
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = adbCommand,
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Monospace),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
                             color = MaterialTheme.colorScheme.primary
                         )
                         Spacer(modifier = Modifier.height(10.dp))
