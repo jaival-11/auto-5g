@@ -320,9 +320,12 @@ class Smart5GService : Service() {
 
     private fun applyTargetMode(mode: Int, force: Boolean = false) {
         if (force || lastAppliedMode != mode) {
-            val success = NetworkModeController.setNetworkMode(applicationContext, mode, permissionMode)
-            if (success || force) {
-                lastAppliedMode = mode
+            lastAppliedMode = mode // Optimistically update to prevent spamming
+            serviceScope.launch(Dispatchers.IO) {
+                val success = NetworkModeController.setNetworkMode(applicationContext, mode, permissionMode)
+                if (!success && !force) {
+                    android.util.Log.e("Auto5G-Service", "Failed to apply network mode: $mode")
+                }
             }
         }
     }
