@@ -56,6 +56,18 @@ object NetworkModeController {
     }
 
     fun getCurrentNetworkMode(context: Context): Int {
+        if (cachedShizukuService?.asBinder()?.pingBinder() == true) {
+            try {
+                val subManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? android.telephony.SubscriptionManager
+                val activeSubId = subManager?.activeSubscriptionInfoList?.firstOrNull()?.subscriptionId 
+                    ?: android.telephony.SubscriptionManager.getDefaultSubscriptionId()
+                val shizukuMode = cachedShizukuService?.getCurrentNetworkMode(activeSubId) ?: -1
+                if (shizukuMode != -1) return shizukuMode
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
         val keys = getSettingKeys(context)
         for (key in keys) {
             try {
@@ -88,34 +100,61 @@ object NetworkModeController {
         return success
     }
 
-    private fun setNetworkModeViaShizuku(context: Context, mode: Int): Boolean {
-        return try {
-            if (!Shizuku.pingBinder()) return false
-            val keys = getSettingKeys(context)
-            val commands = mutableListOf<String>()
-            for (key in keys) {
-                commands.add("settings put global $key $mode")
-            }
-            commands.add("cmd telephony setAllowedNetworkTypes $mode")
-            commands.add("exit")
+    private var cachedShizukuService: me.jaival.auto5g.IShizukuController? = null
 
-            val commandStr = commands.joinToString("\n") + "\n"
-            val method = Shizuku::class.java.getDeclaredMethod(
-                "newProcess",
-                Array<String>::class.java,
-                Array<String>::class.java,
-                String::class.java
-            )
-            method.isAccessible = true
-            val process = method.invoke(null, arrayOf("sh"), null, null) as java.lang.Process
-            val os: OutputStream = process.outputStream
-            os.write(commandStr.toByteArray(Charsets.UTF_8))
-            os.flush()
-            os.close()
-            process.waitFor() == 0
+    private fun setNetworkModeViaShizuku(context: Context, mode: Int): Boolean {
+        if (!Shizuku.pingBinder()) return false
+        var success = false
+        
+        if (cachedShizukuService?.asBinder()?.pingBinder() == true) {
+            return try {
+                val subManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? android.telephony.SubscriptionManager
+                val activeSubId = subManager?.activeSubscriptionInfoList?.firstOrNull()?.subscriptionId 
+                    ?: android.telephony.SubscriptionManager.getDefaultSubscriptionId()
+                cachedShizukuService?.setNetworkMode(activeSubId, mode)
+                true
+            } catch (e: Exception) {
+                e.printStackTrace()
+                false
+            }
+        }
+
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val args = Shizuku.UserServiceArgs(android.content.ComponentName(context, me.jaival.auto5g.services.ShizukuControllerService::class.java))
+            .processNameSuffix("service")
+            .debuggable(me.jaival.auto5g.BuildConfig.DEBUG)
+            .version(me.jaival.auto5g.BuildConfig.VERSION_CODE)
+            .tag("Auto5G")
+        
+        val connection = object : android.content.ServiceConnection {
+            override fun onServiceConnected(componentName: android.content.ComponentName?, binder: android.os.IBinder?) {
+                if (binder != null && binder.pingBinder()) {
+                    try {
+                        val service = me.jaival.auto5g.IShizukuController.Stub.asInterface(binder)
+                        cachedShizukuService = service
+                        val subManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? android.telephony.SubscriptionManager
+                        val activeSubId = subManager?.activeSubscriptionInfoList?.firstOrNull()?.subscriptionId 
+                            ?: android.telephony.SubscriptionManager.getDefaultSubscriptionId()
+                        
+                        service.setNetworkMode(activeSubId, mode)
+                        success = true
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+                latch.countDown()
+            }
+            override fun onServiceDisconnected(componentName: android.content.ComponentName?) {
+                cachedShizukuService = null
+            }
+        }
+        
+        try {
+            Shizuku.bindUserService(args, connection)
+            latch.await(5, java.util.concurrent.TimeUnit.SECONDS)
         } catch (e: Exception) {
             e.printStackTrace()
-            false
         }
+        return success
     }
 }
