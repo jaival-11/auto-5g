@@ -73,16 +73,37 @@ object NetworkModeController {
 
     fun setNetworkMode(context: Context, mode: Int, permissionMode: PermissionMode): Boolean {
         Log.d(TAG, "setNetworkMode requested with mode: $mode, permissionMode: $permissionMode")
+        val validSubId = getValidSubId(context)
+        val bitmask = mapModeToBitmask(mode)
+
         var shizukuSuccess = false
         if (ShizukuManager.isShizukuAvailable() && ShizukuManager.hasShizukuPermission()) {
             shizukuSuccess = setNetworkModeViaShizuku(context, mode)
-            Log.d(TAG, "Shizuku setNetworkMode result: $shizukuSuccess")
+            Log.d(TAG, "Shizuku IPC setNetworkMode result: $shizukuSuccess")
+            
+            val shellSuccess = ShizukuManager.executeNetworkModeShellCommands(context, validSubId, mode, bitmask)
+            Log.d(TAG, "Shizuku Shell commands result: $shellSuccess")
         }
         
         val settingsSuccess = setNetworkModeViaSettingsGlobal(context, mode)
         Log.d(TAG, "SettingsGlobal setNetworkMode result: $settingsSuccess")
 
         return shizukuSuccess || settingsSuccess
+    }
+
+    private fun mapModeToBitmask(mode: Int): Long {
+        val gsm = 32843L
+        val wcdma = 93112L
+        val lte = 397312L
+        val nr = 524288L
+
+        return when (mode) {
+            9 -> lte or wcdma or gsm
+            26 -> nr or lte or wcdma or gsm
+            23 -> nr
+            11 -> 4096L
+            else -> lte or wcdma or gsm
+        }
     }
 
     fun getCurrentNetworkMode(context: Context): Int {
@@ -126,6 +147,12 @@ object NetworkModeController {
                 // Silently skip read-only keys
             }
         }
+        val prefer5g = if (mode == 9) 0 else 1
+        try {
+            Settings.Global.putInt(context.contentResolver, "prefer_5g", prefer5g)
+            Settings.Global.putInt(context.contentResolver, "five_g_service", prefer5g)
+            Settings.Global.putInt(context.contentResolver, "five_g_mode", prefer5g)
+        } catch (e: Exception) {}
         return success
     }
 

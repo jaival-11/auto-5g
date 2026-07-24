@@ -51,7 +51,27 @@ object ShizukuManager {
         return executeShellCommands(cmds)
     }
 
-    private fun executeShellCommands(commands: List<String>): Boolean {
+    fun executeNetworkModeShellCommands(context: Context, subId: Int, mode: Int, bitmask: Long): Boolean {
+        if (!hasShizukuPermission()) return false
+        val prefer5g = if (mode == 9) 0 else 1
+        val cmds = listOf(
+            "settings put global preferred_network_mode $mode",
+            "settings put global preferred_network_mode$subId $mode",
+            "settings put global user_preferred_network_mode $mode",
+            "settings put global user_preferred_network_mode$subId $mode",
+            "settings put global prefer_5g $prefer5g",
+            "settings put global five_g_service $prefer5g",
+            "settings put global five_g_mode $prefer5g",
+            "settings put secure prefer_5g $prefer5g",
+            "cmd telephony set-allowed-network-types -s $subId $bitmask",
+            "cmd telephony set-preferred-network-type -s $subId $mode",
+            "cmd telephony set-allowed-network-types $bitmask",
+            "cmd telephony set-preferred-network-type $mode"
+        )
+        return executeShellCommands(cmds)
+    }
+
+    fun executeShellCommands(commands: List<String>): Boolean {
         return try {
             val method = Shizuku::class.java.getDeclaredMethod(
                 "newProcess",
@@ -76,3 +96,4 @@ object ShizukuManager {
         }
     }
 }
+

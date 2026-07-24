@@ -234,12 +234,18 @@ class ShizukuControllerService() : IShizukuController.Stub() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val networkTypeBitmask = mapNetworkModeToBitmask(networkMode)
-                Log.d(TAG, "mapped bitmask: $networkTypeBitmask for user reason: $reasonUser, validSubId: $validSubId")
-                try {
-                    invokeTelephonyMethod("setAllowedNetworkTypesForReason", validSubId, reasonUser, networkTypeBitmask)
-                    Log.d(TAG, "setAllowedNetworkTypesForReason completed")
-                } catch (e: Exception) {
-                    Log.w(TAG, "setAllowedNetworkTypesForReason failed", e)
+                Log.d(TAG, "mapped bitmask: $networkTypeBitmask, validSubId: $validSubId")
+                
+                // On Samsung One UI & custom vendor ROMs, setting reason 0 (USER) alone can be overridden by reason 1 (POWER) or reason 2 (CARRIER).
+                // Updating all reasons ensures the bitwise AND (intersection) evaluates to the target network mode.
+                val reasons = intArrayOf(0, 1, 2, 3)
+                for (r in reasons) {
+                    try {
+                        invokeTelephonyMethod("setAllowedNetworkTypesForReason", validSubId, r, networkTypeBitmask)
+                        Log.d(TAG, "setAllowedNetworkTypesForReason completed for reason $r")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "setAllowedNetworkTypesForReason failed for reason $r", e)
+                    }
                 }
             }
             
@@ -258,6 +264,7 @@ class ShizukuControllerService() : IShizukuController.Stub() {
         // Cleanup if needed
     }
 }
+
 
 
 
