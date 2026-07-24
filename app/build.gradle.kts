@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "me.jaival.5g"
+    namespace = "me.jaival.auto5g"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "me.jaival.5g"
+        applicationId = "me.jaival.auto5g"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
