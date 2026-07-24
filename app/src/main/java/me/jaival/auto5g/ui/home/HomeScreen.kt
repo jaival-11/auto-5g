@@ -31,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -63,11 +64,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import me.jaival.auto5g.BuildConfig
 import me.jaival.auto5g.data.HotspotMode
+import me.jaival.auto5g.data.PermissionMode
 import me.jaival.auto5g.data.SettingsRepository
 import me.jaival.auto5g.service.Smart5GService
+import me.jaival.auto5g.system.NetworkModeController
 import me.jaival.auto5g.system.TrafficMonitor
 import me.jaival.auto5g.updater.UpdateManager
 import me.jaival.auto5g.updater.UpdateManagerImpl
@@ -87,6 +91,7 @@ fun HomeScreen(
     val scope = rememberCoroutineScope()
 
     val masterEnabled by repository.masterSwitchFlow.collectAsState(initial = false)
+    val permissionMode by repository.permissionModeFlow.collectAsState(initial = PermissionMode.SHIZUKU_CONTINUOUS)
     val displayTriggerEnabled by repository.displayTriggerEnabledFlow.collectAsState(initial = true)
     val displayOffDelaySecs by repository.displayOffDelaySecsFlow.collectAsState(initial = 10)
     val displayOnDelaySecs by repository.displayOnDelaySecsFlow.collectAsState(initial = 2)
@@ -163,6 +168,12 @@ fun HomeScreen(
                 onToggle = { enabled ->
                     scope.launch { repository.setMasterSwitch(enabled) }
                 }
+            )
+
+            // Manual Network Switching Card (For Testing & Verification)
+            ManualNetworkSwitchCard(
+                context = context,
+                permissionMode = permissionMode
             )
 
             // Display Trigger Card
@@ -640,3 +651,142 @@ private fun AppSelectionDialog(
         }
     )
 }
+
+@Composable
+private fun ManualNetworkSwitchCard(
+    context: Context,
+    permissionMode: PermissionMode
+) {
+    val scope = rememberCoroutineScope()
+    var currentMode by remember { mutableStateOf(-1) }
+    var statusText by remember { mutableStateOf<String?>(null) }
+    var isOperating by remember { mutableStateOf(false) }
+
+    fun refreshMode() {
+        scope.launch(Dispatchers.IO) {
+            val mode = NetworkModeController.getCurrentNetworkMode(context)
+            scope.launch(Dispatchers.Main) {
+                currentMode = mode
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        refreshMode()
+    }
+
+    fun triggerMode(mode: Int, modeName: String) {
+        isOperating = true
+        statusText = "Switching to $modeName..."
+        scope.launch(Dispatchers.IO) {
+            val success = NetworkModeController.setNetworkMode(context, mode, permissionMode)
+            kotlinx.coroutines.delay(1000)
+            val updatedMode = NetworkModeController.getCurrentNetworkMode(context)
+            scope.launch(Dispatchers.Main) {
+                currentMode = updatedMode
+                isOperating = false
+                statusText = if (success) {
+                    "Applied $modeName! Reported system mode: ${getModeName(updatedMode)}"
+                } else {
+                    "Failed to switch to $modeName. Verify Shizuku/Settings permissions."
+                }
+            }
+        }
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Manual Network Switching (Test)",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                    Text(
+                        "Test direct network switching manually to isolate trigger issues.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = { refreshMode() }) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Refresh Mode"
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "Current Network Mode: ${getModeName(currentMode)}",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                    modifier = Modifier.padding(12.dp),
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = { triggerMode(NetworkModeController.NETWORK_MODE_5G_PREFERRED, "5G Preferred") },
+                    enabled = !isOperating,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("5G Pref", fontSize = 11.sp)
+                }
+                Button(
+                    onClick = { triggerMode(NetworkModeController.NETWORK_MODE_4G_PREFERRED, "4G Preferred") },
+                    enabled = !isOperating,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("4G Pref", fontSize = 11.sp)
+                }
+                Button(
+                    onClick = { triggerMode(NetworkModeController.NETWORK_MODE_STRICT_5G_ONLY, "5G Only") },
+                    enabled = !isOperating,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("5G Only", fontSize = 11.sp)
+                }
+            }
+
+            if (statusText != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = statusText!!,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+private fun getModeName(mode: Int): String {
+    return when (mode) {
+        9 -> "4G Preferred (Mode 9)"
+        26 -> "5G Preferred (Mode 26)"
+        23 -> "Strict 5G Only (Mode 23)"
+        11 -> "LTE Only (Mode 11)"
+        -1 -> "Unknown / Unavailable"
+        else -> "Mode $mode"
+    }
+}
+

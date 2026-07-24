@@ -2,25 +2,24 @@ package me.jaival.auto5g.services
 
 import android.content.Context
 import android.os.Build
-import androidx.annotation.Keep
 import android.util.Log
+import androidx.annotation.Keep
 import me.jaival.auto5g.IShizukuController
+import com.android.internal.telephony.ITelephony
 
 class ShizukuControllerService() : IShizukuController.Stub() {
 
     companion object {
         private const val TAG = "Auto5G-ShizukuSvc"
 
-        private val iTelephonyProxy: Any? by lazy {
+        private val iTelephony: ITelephony? by lazy {
             try {
                 val serviceManagerClass = Class.forName("android.os.ServiceManager")
                 val getServiceMethod = serviceManagerClass.getMethod("getService", String::class.java)
                 val binder = getServiceMethod.invoke(null, Context.TELEPHONY_SERVICE) as android.os.IBinder
-                val stubClass = Class.forName("com.android.internal.telephony.ITelephony\$Stub")
-                val asInterfaceMethod = stubClass.getMethod("asInterface", android.os.IBinder::class.java)
-                asInterfaceMethod.invoke(null, binder)
+                ITelephony.Stub.asInterface(binder)
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to get ITelephony proxy", e)
+                Log.e(TAG, "Failed to get ITelephony interface", e)
                 null
             }
         }
@@ -33,23 +32,6 @@ class ShizukuControllerService() : IShizukuController.Stub() {
             } catch (e: Exception) {
                 0
             }
-        }
-
-        private fun invokeITelephony(methodName: String, vararg args: Any): Any? {
-            val proxy = iTelephonyProxy ?: throw IllegalStateException("iTelephony proxy is null")
-            val methods = proxy.javaClass.methods
-            for (method in methods) {
-                if (method.name == methodName && method.parameterTypes.size == args.size) {
-                    try {
-                        method.isAccessible = true
-                        return method.invoke(proxy, *args)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to invoke $methodName", e)
-                        throw e
-                    }
-                }
-            }
-            throw NoSuchMethodException("Method $methodName not found in ITelephony with ${args.size} args")
         }
         
         // Get network type bitmasks from Android TelephonyManager constants
@@ -156,8 +138,8 @@ class ShizukuControllerService() : IShizukuController.Stub() {
                 bitmask == NETWORK_TYPE_BITMASK_UMTS -> 2 // WCDMA_ONLY
                 bitmask == NETWORK_TYPE_BITMASK_TD_SCDMA -> 13 // TDSCDMA_ONLY
                 bitmask == (NETWORK_TYPE_BITMASK_NR or NETWORK_TYPE_BITMASK_LTE) -> 24 // NR_LTE
-                (bitmask and NETWORK_TYPE_BITMASK_NR) != 0L -> 23 // Has 5G, default to NR_ONLY
-                (bitmask and NETWORK_TYPE_BITMASK_LTE) != 0L -> 11 // Has LTE, default to LTE_ONLY
+                (bitmask and NETWORK_TYPE_BITMASK_NR) != 0L -> 26 // Has 5G, default to 5G Preferred (26)
+                (bitmask and NETWORK_TYPE_BITMASK_LTE) != 0L -> 9 // Has LTE, default to 4G Preferred (9)
                 (bitmask and get3GBitmask()) != 0L -> 2 // Has 3G, default to WCDMA_ONLY
                 (bitmask and get2GBitmask()) != 0L -> 1 // Has 2G, default to GSM_ONLY
                 else -> 0 // WCDMA_PREF as ultimate fallback
@@ -170,13 +152,14 @@ class ShizukuControllerService() : IShizukuController.Stub() {
 
     override fun compatibilityCheck(subId: Int): Boolean {
         Log.d(TAG, "compatibilityCheck called for subId: $subId")
+        val telephony = iTelephony ?: return false
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val current = invokeITelephony("getAllowedNetworkTypesForReason", subId, reasonUser) as Long
-                invokeITelephony("setAllowedNetworkTypesForReason", subId, reasonUser, current)
+                val current = telephony.getAllowedNetworkTypesForReason(subId, reasonUser)
+                telephony.setAllowedNetworkTypesForReason(subId, reasonUser, current)
             } else {
-                val current = invokeITelephony("getPreferredNetworkType", subId) as Int
-                invokeITelephony("setPreferredNetworkType", subId, current)
+                val current = telephony.getPreferredNetworkType(subId)
+                telephony.setPreferredNetworkType(subId, current)
             }
             Log.d(TAG, "compatibilityCheck successful")
             true
@@ -188,15 +171,16 @@ class ShizukuControllerService() : IShizukuController.Stub() {
 
     override fun getCurrentNetworkMode(subId: Int): Int {
         Log.d(TAG, "getCurrentNetworkMode called for subId: $subId")
+        val telephony = iTelephony ?: return -1
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val currentBitmask = invokeITelephony("getAllowedNetworkTypesForReason", subId, reasonUser) as Long
+                val currentBitmask = telephony.getAllowedNetworkTypesForReason(subId, reasonUser)
                 Log.d(TAG, "current bitmask for user reason: $currentBitmask")
                 val mode = mapBitmaskToNetworkMode(currentBitmask)
                 Log.d(TAG, "mapped mode: $mode")
                 mode
             } else {
-                val mode = invokeITelephony("getPreferredNetworkType", subId) as Int
+                val mode = telephony.getPreferredNetworkType(subId)
                 Log.d(TAG, "legacy getPreferredNetworkType: $mode")
                 mode
             }
@@ -208,15 +192,20 @@ class ShizukuControllerService() : IShizukuController.Stub() {
 
     override fun setNetworkMode(subId: Int, networkMode: Int) {
         Log.d(TAG, "setNetworkMode called for subId: $subId to mode: $networkMode")
+        val telephony = iTelephony
+        if (telephony == null) {
+            Log.e(TAG, "setNetworkMode failed: iTelephony is null")
+            return
+        }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val networkTypeBitmask = mapNetworkModeToBitmask(networkMode)
                 Log.d(TAG, "mapped bitmask: $networkTypeBitmask for user reason: $reasonUser")
-                invokeITelephony("setAllowedNetworkTypesForReason", subId, reasonUser, networkTypeBitmask)
+                telephony.setAllowedNetworkTypesForReason(subId, reasonUser, networkTypeBitmask)
                 Log.d(TAG, "setAllowedNetworkTypesForReason completed")
             } else {
                 Log.d(TAG, "using legacy setPreferredNetworkType")
-                invokeITelephony("setPreferredNetworkType", subId, networkMode)
+                telephony.setPreferredNetworkType(subId, networkMode)
             }
         } catch (e: Exception) {
             Log.e(TAG, "setNetworkMode failed", e)
@@ -227,3 +216,4 @@ class ShizukuControllerService() : IShizukuController.Stub() {
         // Cleanup if needed
     }
 }
+

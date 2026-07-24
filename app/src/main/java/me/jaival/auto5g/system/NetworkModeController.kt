@@ -2,20 +2,35 @@ package me.jaival.auto5g.system
 
 import android.content.Context
 import android.provider.Settings
+import android.telephony.SubscriptionManager
 import android.util.Log
 import me.jaival.auto5g.data.PermissionMode
 import rikka.shizuku.Shizuku
-import java.io.OutputStream
 
 object NetworkModeController {
 
     private const val TAG = "Auto5G-NetCtrl"
 
-    const val NETWORK_MODE_4G_PREFERRED = 9  // LTE/GSM/WCDMA
-    const val NETWORK_MODE_5G_PREFERRED = 26 // NR/LTE/GSM/WCDMA
-    const val NETWORK_MODE_STRICT_5G_ONLY = 20 // NR Only
+    const val NETWORK_MODE_4G_PREFERRED = 9   // LTE/GSM/WCDMA
+    const val NETWORK_MODE_5G_PREFERRED = 26  // NR/LTE/GSM/WCDMA
+    const val NETWORK_MODE_STRICT_5G_ONLY = 23 // NR Only (Mode 23 in Android Telephony)
 
     private const val PRIMARY_SETTING_KEY = "preferred_network_mode"
+
+    fun getActiveDataSubId(context: Context): Int {
+        return try {
+            val dataSubId = SubscriptionManager.getDefaultDataSubscriptionId()
+            if (dataSubId != SubscriptionManager.INVALID_SUBSCRIPTION_ID && dataSubId != -1) {
+                dataSubId
+            } else {
+                val subManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
+                subManager?.activeSubscriptionInfoList?.firstOrNull()?.subscriptionId 
+                    ?: SubscriptionManager.getDefaultSubscriptionId()
+            }
+        } catch (e: Throwable) {
+            SubscriptionManager.getDefaultSubscriptionId()
+        }
+    }
 
     private fun getSettingKeys(context: Context): Set<String> {
         val keys = mutableSetOf(
@@ -27,7 +42,12 @@ object NetworkModeController {
             "user_preferred_network_mode2"
         )
         try {
-            val subManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? android.telephony.SubscriptionManager
+            val activeSubId = getActiveDataSubId(context)
+            keys.add("preferred_network_mode$activeSubId")
+            keys.add("preferred_network_mode_${activeSubId}")
+            keys.add("user_preferred_network_mode$activeSubId")
+
+            val subManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
             if (subManager != null) {
                 val activeList = subManager.activeSubscriptionInfoList
                 activeList?.forEach { info ->
@@ -49,30 +69,30 @@ object NetworkModeController {
 
     fun setNetworkMode(context: Context, mode: Int, permissionMode: PermissionMode): Boolean {
         Log.d(TAG, "setNetworkMode requested with mode: $mode, permissionMode: $permissionMode")
-        return when (permissionMode) {
-            PermissionMode.SHIZUKU_CONTINUOUS -> {
-                setNetworkModeViaShizuku(context, mode)
-            }
-            PermissionMode.SHIZUKU_ONETIME, PermissionMode.MANUAL_ADB -> {
-                Log.w(TAG, "Legacy setting path used!")
-                setNetworkModeViaSettingsGlobal(context, mode)
-            }
+        var shizukuSuccess = false
+        if (ShizukuManager.isShizukuAvailable() && ShizukuManager.hasShizukuPermission()) {
+            shizukuSuccess = setNetworkModeViaShizuku(context, mode)
+            Log.d(TAG, "Shizuku setNetworkMode result: $shizukuSuccess")
         }
+        
+        val settingsSuccess = setNetworkModeViaSettingsGlobal(context, mode)
+        Log.d(TAG, "SettingsGlobal setNetworkMode result: $settingsSuccess")
+
+        return shizukuSuccess || settingsSuccess
     }
 
     fun getCurrentNetworkMode(context: Context): Int {
         Log.d(TAG, "getCurrentNetworkMode called")
-        if (cachedShizukuService?.asBinder()?.pingBinder() == true) {
-            try {
-                val subManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? android.telephony.SubscriptionManager
-                val activeSubId = subManager?.activeSubscriptionInfoList?.firstOrNull()?.subscriptionId 
-                    ?: android.telephony.SubscriptionManager.getDefaultSubscriptionId()
-                val shizukuMode = cachedShizukuService?.getCurrentNetworkMode(activeSubId) ?: -1
-                Log.d(TAG, "getCurrentNetworkMode from Shizuku: $shizukuMode (subId: $activeSubId)")
-                if (shizukuMode != -1) return shizukuMode
-            } catch (e: Exception) {
-                Log.e(TAG, "getCurrentNetworkMode via Shizuku failed", e)
-                e.printStackTrace()
+        if (ShizukuManager.isShizukuAvailable() && ShizukuManager.hasShizukuPermission()) {
+            if (cachedShizukuService?.asBinder()?.pingBinder() == true) {
+                try {
+                    val activeSubId = getActiveDataSubId(context)
+                    val shizukuMode = cachedShizukuService?.getCurrentNetworkMode(activeSubId) ?: -1
+                    Log.d(TAG, "getCurrentNetworkMode from cached Shizuku: $shizukuMode (subId: $activeSubId)")
+                    if (shizukuMode != -1) return shizukuMode
+                } catch (e: Exception) {
+                    Log.e(TAG, "getCurrentNetworkMode via cached Shizuku failed", e)
+                }
             }
         }
 
@@ -99,11 +119,8 @@ object NetworkModeController {
                     success = true
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                // Silently skip read-only keys
             }
-        }
-        if (!success && ShizukuManager.isShizukuAvailable() && ShizukuManager.hasShizukuPermission()) {
-            return setNetworkModeViaShizuku(context, mode)
         }
         return success
     }
@@ -121,15 +138,13 @@ object NetworkModeController {
         if (cachedShizukuService?.asBinder()?.pingBinder() == true) {
             Log.d(TAG, "setNetworkModeViaShizuku: Using cached Shizuku service")
             return try {
-                val subManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? android.telephony.SubscriptionManager
-                val activeSubId = subManager?.activeSubscriptionInfoList?.firstOrNull()?.subscriptionId 
-                    ?: android.telephony.SubscriptionManager.getDefaultSubscriptionId()
+                val activeSubId = getActiveDataSubId(context)
                 cachedShizukuService?.setNetworkMode(activeSubId, mode)
                 Log.d(TAG, "setNetworkModeViaShizuku: Success via cached service on subId: $activeSubId")
                 true
             } catch (e: Exception) {
                 Log.e(TAG, "setNetworkModeViaShizuku: Exception with cached service", e)
-                e.printStackTrace()
+                cachedShizukuService = null
                 false
             }
         }
@@ -149,9 +164,7 @@ object NetworkModeController {
                     try {
                         val service = me.jaival.auto5g.IShizukuController.Stub.asInterface(binder)
                         cachedShizukuService = service
-                        val subManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? android.telephony.SubscriptionManager
-                        val activeSubId = subManager?.activeSubscriptionInfoList?.firstOrNull()?.subscriptionId 
-                            ?: android.telephony.SubscriptionManager.getDefaultSubscriptionId()
+                        val activeSubId = getActiveDataSubId(context)
                         
                         Log.d(TAG, "Setting mode $mode for subId $activeSubId")
                         service.setNetworkMode(activeSubId, mode)
@@ -182,3 +195,4 @@ object NetworkModeController {
         return success
     }
 }
+
