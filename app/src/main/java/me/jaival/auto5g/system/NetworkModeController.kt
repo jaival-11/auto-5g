@@ -17,18 +17,22 @@ object NetworkModeController {
 
     private const val PRIMARY_SETTING_KEY = "preferred_network_mode"
 
-    fun getActiveDataSubId(context: Context): Int {
+    fun getValidSubId(context: Context): Int {
         return try {
             val dataSubId = SubscriptionManager.getDefaultDataSubscriptionId()
-            if (dataSubId != SubscriptionManager.INVALID_SUBSCRIPTION_ID && dataSubId != -1) {
-                dataSubId
-            } else {
-                val subManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
-                subManager?.activeSubscriptionInfoList?.firstOrNull()?.subscriptionId 
-                    ?: SubscriptionManager.getDefaultSubscriptionId()
+            if (SubscriptionManager.isValidSubscriptionId(dataSubId)) {
+                return dataSubId
             }
+            val defaultSubId = SubscriptionManager.getDefaultSubscriptionId()
+            if (SubscriptionManager.isValidSubscriptionId(defaultSubId)) {
+                return defaultSubId
+            }
+            val subManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
+            val list = subManager?.activeSubscriptionInfoList
+            val validSub = list?.firstOrNull { SubscriptionManager.isValidSubscriptionId(it.subscriptionId) }
+            validSub?.subscriptionId ?: 1
         } catch (e: Throwable) {
-            SubscriptionManager.getDefaultSubscriptionId()
+            1
         }
     }
 
@@ -42,7 +46,7 @@ object NetworkModeController {
             "user_preferred_network_mode2"
         )
         try {
-            val activeSubId = getActiveDataSubId(context)
+            val activeSubId = getValidSubId(context)
             keys.add("preferred_network_mode$activeSubId")
             keys.add("preferred_network_mode_${activeSubId}")
             keys.add("user_preferred_network_mode$activeSubId")
@@ -86,7 +90,7 @@ object NetworkModeController {
         if (ShizukuManager.isShizukuAvailable() && ShizukuManager.hasShizukuPermission()) {
             if (cachedShizukuService?.asBinder()?.pingBinder() == true) {
                 try {
-                    val activeSubId = getActiveDataSubId(context)
+                    val activeSubId = getValidSubId(context)
                     val shizukuMode = cachedShizukuService?.getCurrentNetworkMode(activeSubId) ?: -1
                     Log.d(TAG, "getCurrentNetworkMode from cached Shizuku: $shizukuMode (subId: $activeSubId)")
                     if (shizukuMode != -1) return shizukuMode
@@ -138,7 +142,7 @@ object NetworkModeController {
         if (cachedShizukuService?.asBinder()?.pingBinder() == true) {
             Log.d(TAG, "setNetworkModeViaShizuku: Using cached Shizuku service")
             return try {
-                val activeSubId = getActiveDataSubId(context)
+                val activeSubId = getValidSubId(context)
                 cachedShizukuService?.setNetworkMode(activeSubId, mode)
                 Log.d(TAG, "setNetworkModeViaShizuku: Success via cached service on subId: $activeSubId")
                 true
@@ -164,7 +168,7 @@ object NetworkModeController {
                     try {
                         val service = me.jaival.auto5g.IShizukuController.Stub.asInterface(binder)
                         cachedShizukuService = service
-                        val activeSubId = getActiveDataSubId(context)
+                        val activeSubId = getValidSubId(context)
                         
                         Log.d(TAG, "Setting mode $mode for subId $activeSubId")
                         service.setNetworkMode(activeSubId, mode)
@@ -195,4 +199,5 @@ object NetworkModeController {
         return success
     }
 }
+
 

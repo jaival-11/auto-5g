@@ -199,13 +199,14 @@ class ShizukuControllerService() : IShizukuController.Stub() {
 
     override fun compatibilityCheck(subId: Int): Boolean {
         Log.d(TAG, "compatibilityCheck called for subId: $subId")
+        val validSubId = if (android.telephony.SubscriptionManager.isValidSubscriptionId(subId)) subId else 1
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val current = (invokeTelephonyMethod("getAllowedNetworkTypesForReason", subId, reasonUser) as? Number)?.toLong() ?: 0L
-                invokeTelephonyMethod("setAllowedNetworkTypesForReason", subId, reasonUser, current)
+                val current = (invokeTelephonyMethod("getAllowedNetworkTypesForReason", validSubId, reasonUser) as? Number)?.toLong() ?: 0L
+                invokeTelephonyMethod("setAllowedNetworkTypesForReason", validSubId, reasonUser, current)
             } else {
-                val current = (invokeTelephonyMethod("getPreferredNetworkType", subId) as? Number)?.toInt() ?: 0
-                invokeTelephonyMethod("setPreferredNetworkType", subId, current)
+                val current = (invokeTelephonyMethod("getPreferredNetworkType", validSubId) as? Number)?.toInt() ?: 0
+                invokeTelephonyMethod("setPreferredNetworkType", validSubId, current)
             }
             Log.d(TAG, "compatibilityCheck successful")
             true
@@ -217,19 +218,20 @@ class ShizukuControllerService() : IShizukuController.Stub() {
 
     override fun getCurrentNetworkMode(subId: Int): Int {
         Log.d(TAG, "getCurrentNetworkMode called for subId: $subId")
+        val validSubId = if (android.telephony.SubscriptionManager.isValidSubscriptionId(subId)) subId else 1
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val currentBitmask = (invokeTelephonyMethod("getAllowedNetworkTypesForReason", subId, reasonUser) as? Number)?.toLong() ?: -1L
+                val currentBitmask = (invokeTelephonyMethod("getAllowedNetworkTypesForReason", validSubId, reasonUser) as? Number)?.toLong() ?: -1L
                 Log.d(TAG, "current bitmask for user reason: $currentBitmask")
-                if (currentBitmask == -1L) return -1
-                val mode = mapBitmaskToNetworkMode(currentBitmask)
-                Log.d(TAG, "mapped mode: $mode")
-                mode
-            } else {
-                val mode = (invokeTelephonyMethod("getPreferredNetworkType", subId) as? Number)?.toInt() ?: -1
-                Log.d(TAG, "legacy getPreferredNetworkType: $mode")
-                mode
+                if (currentBitmask != -1L) {
+                    val mode = mapBitmaskToNetworkMode(currentBitmask)
+                    Log.d(TAG, "mapped mode: $mode")
+                    return mode
+                }
             }
+            val mode = (invokeTelephonyMethod("getPreferredNetworkType", validSubId) as? Number)?.toInt() ?: -1
+            Log.d(TAG, "getPreferredNetworkType mode: $mode")
+            mode
         } catch (e: Exception) {
             Log.e(TAG, "getCurrentNetworkMode failed", e)
             -1
@@ -238,20 +240,24 @@ class ShizukuControllerService() : IShizukuController.Stub() {
 
     override fun setNetworkMode(subId: Int, networkMode: Int) {
         Log.d(TAG, "setNetworkMode called for subId: $subId to mode: $networkMode")
+        val validSubId = if (android.telephony.SubscriptionManager.isValidSubscriptionId(subId)) subId else 1
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val networkTypeBitmask = mapNetworkModeToBitmask(networkMode)
-                Log.d(TAG, "mapped bitmask: $networkTypeBitmask for user reason: $reasonUser")
+                Log.d(TAG, "mapped bitmask: $networkTypeBitmask for user reason: $reasonUser, validSubId: $validSubId")
                 try {
-                    invokeTelephonyMethod("setAllowedNetworkTypesForReason", subId, reasonUser, networkTypeBitmask)
+                    invokeTelephonyMethod("setAllowedNetworkTypesForReason", validSubId, reasonUser, networkTypeBitmask)
                     Log.d(TAG, "setAllowedNetworkTypesForReason completed")
                 } catch (e: Exception) {
-                    Log.w(TAG, "setAllowedNetworkTypesForReason failed, attempting fallback to setPreferredNetworkType", e)
-                    invokeTelephonyMethod("setPreferredNetworkType", subId, networkMode)
+                    Log.w(TAG, "setAllowedNetworkTypesForReason failed", e)
                 }
-            } else {
-                Log.d(TAG, "using legacy setPreferredNetworkType")
-                invokeTelephonyMethod("setPreferredNetworkType", subId, networkMode)
+            }
+            
+            try {
+                invokeTelephonyMethod("setPreferredNetworkType", validSubId, networkMode)
+                Log.d(TAG, "setPreferredNetworkType completed")
+            } catch (e: Exception) {
+                Log.w(TAG, "setPreferredNetworkType failed", e)
             }
         } catch (e: Exception) {
             Log.e(TAG, "setNetworkMode failed", e)
@@ -262,5 +268,6 @@ class ShizukuControllerService() : IShizukuController.Stub() {
         // Cleanup if needed
     }
 }
+
 
 
