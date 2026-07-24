@@ -46,7 +46,14 @@ object NetworkModeController {
         return try {
             if (!Shizuku.pingBinder()) return false
             val command = "settings put global $SETTING_KEY $mode\nexit\n"
-            val process = Shizuku.newProcess(arrayOf("sh"), null, null)
+            val method = Shizuku::class.java.getDeclaredMethod(
+                "newProcess",
+                Array<String>::class.java,
+                Array<String>::class.java,
+                String::class.java
+            )
+            method.isAccessible = true
+            val process = method.invoke(null, arrayOf("sh"), null, null) as java.lang.Process
             val os: OutputStream = process.outputStream
             os.write(command.toByteArray(Charsets.UTF_8))
             os.flush()

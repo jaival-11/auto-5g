@@ -174,15 +174,15 @@ class Smart5GService : Service() {
                 repository.smartSwitchingEnabledFlow,
                 repository.highMbpsThresholdFlow,
                 repository.lowMbpsThresholdFlow
-            ) { master, permMode, dispEnabled, offDelay, onDelay, smartEnabled, highThresh, lowThresh ->
-                masterEnabled = master
-                permissionMode = permMode
-                displayTriggerEnabled = dispEnabled
-                displayOffDelaySecs = offDelay
-                displayOnDelaySecs = onDelay
-                smartSwitchingEnabled = smartEnabled
-                highMbpsThreshold = highThresh
-                lowMbpsThreshold = lowThresh
+            ) { flows: Array<Any?> ->
+                masterEnabled = flows[0] as Boolean
+                permissionMode = flows[1] as PermissionMode
+                displayTriggerEnabled = flows[2] as Boolean
+                displayOffDelaySecs = flows[3] as Int
+                displayOnDelaySecs = flows[4] as Int
+                smartSwitchingEnabled = flows[5] as Boolean
+                highMbpsThreshold = flows[6] as Double
+                lowMbpsThreshold = flows[7] as Double
             }.collectLatest {
                 if (!masterEnabled) {
                     stopSelf()

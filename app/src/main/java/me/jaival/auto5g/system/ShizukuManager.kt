@@ -53,7 +53,14 @@ object ShizukuManager {
 
     private fun executeShellCommands(commands: List<String>): Boolean {
         return try {
-            val process = Shizuku.newProcess(arrayOf("sh"), null, null)
+            val method = Shizuku::class.java.getDeclaredMethod(
+                "newProcess",
+                Array<String>::class.java,
+                Array<String>::class.java,
+                String::class.java
+            )
+            method.isAccessible = true
+            val process = method.invoke(null, arrayOf("sh"), null, null) as java.lang.Process
             val os: OutputStream = process.outputStream
             for (cmd in commands) {
                 os.write("$cmd\n".toByteArray(Charsets.UTF_8))
