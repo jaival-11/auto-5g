@@ -11,6 +11,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -30,18 +32,22 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -60,12 +66,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import me.jaival.auto5g.BuildConfig
 import me.jaival.auto5g.data.HotspotMode
 import me.jaival.auto5g.data.PermissionMode
@@ -78,7 +86,8 @@ import me.jaival.auto5g.updater.UpdateManagerImpl
 
 data class AppItemInfo(
     val packageName: String,
-    val appName: String
+    val appName: String,
+    val iconDrawable: android.graphics.drawable.Drawable? = null
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -98,7 +107,8 @@ fun HomeScreen(
 
     val smartSwitchingEnabled by repository.smartSwitchingEnabledFlow.collectAsState(initial = true)
     val highMbpsThreshold by repository.highMbpsThresholdFlow.collectAsState(initial = 5.0)
-    val lowMbpsThreshold by repository.lowMbpsThresholdFlow.collectAsState(initial = 1.0)
+    val highMbpsDurationSecs by repository.highMbpsDurationSecsFlow.collectAsState(initial = 3)
+    val lowMbpsDurationSecs by repository.lowMbpsDurationSecsFlow.collectAsState(initial = 10)
 
     val whitelistPackages by repository.whitelistPackagesFlow.collectAsState(initial = emptySet())
     val blacklistPackages by repository.blacklistPackagesFlow.collectAsState(initial = emptySet())
@@ -193,8 +203,10 @@ fun HomeScreen(
                 liveMbps = liveMbps,
                 highThreshold = highMbpsThreshold,
                 onHighChange = { thresh -> scope.launch { repository.setHighMbpsThreshold(thresh) } },
-                lowThreshold = lowMbpsThreshold,
-                onLowChange = { thresh -> scope.launch { repository.setLowMbpsThreshold(thresh) } }
+                highDurationSecs = highMbpsDurationSecs,
+                onHighDurationChange = { secs -> scope.launch { repository.setHighMbpsDurationSecs(secs) } },
+                lowDurationSecs = lowMbpsDurationSecs,
+                onLowDurationChange = { secs -> scope.launch { repository.setLowMbpsDurationSecs(secs) } }
             )
 
             // Whitelist / Blacklist Card
@@ -363,8 +375,10 @@ private fun SmartSwitchingCard(
     liveMbps: Double,
     highThreshold: Double,
     onHighChange: (Double) -> Unit,
-    lowThreshold: Double,
-    onLowChange: (Double) -> Unit
+    highDurationSecs: Int,
+    onHighDurationChange: (Int) -> Unit,
+    lowDurationSecs: Int,
+    onLowDurationChange: (Int) -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -393,20 +407,31 @@ private fun SmartSwitchingCard(
                 exit = shrinkVertically() + fadeOut()
             ) {
                 Column(modifier = Modifier.padding(top = 12.dp)) {
-                    Text("Switch to 5G Threshold: %.1f Mbps".format(highThreshold), style = MaterialTheme.typography.labelLarge)
+                    Text("Bandwidth Threshold: %.1f Mbps".format(highThreshold), style = MaterialTheme.typography.labelLarge)
                     Slider(
                         value = highThreshold.toFloat(),
                         onValueChange = { onHighChange(it.toDouble()) },
-                        valueRange = 1f..50f
+                        valueRange = 0.5f..50f
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    Text("Switch to 4G Threshold: %.1f Mbps".format(lowThreshold), style = MaterialTheme.typography.labelLarge)
+                    Text("Time to switch to 5G: ${highDurationSecs}s", style = MaterialTheme.typography.labelLarge)
                     Slider(
-                        value = lowThreshold.toFloat(),
-                        onValueChange = { onLowChange(it.toDouble()) },
-                        valueRange = 0.1f..10f
+                        value = highDurationSecs.toFloat(),
+                        onValueChange = { onHighDurationChange(it.toInt()) },
+                        valueRange = 1f..30f,
+                        steps = 28
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text("Time to revert to 4G: ${lowDurationSecs}s", style = MaterialTheme.typography.labelLarge)
+                    Slider(
+                        value = lowDurationSecs.toFloat(),
+                        onValueChange = { onLowDurationChange(it.toInt()) },
+                        valueRange = 1f..60f,
+                        steps = 58
                     )
                 }
             }
@@ -598,42 +623,210 @@ private fun AppSelectionDialog(
     onDismiss: () -> Unit,
     onConfirm: (Set<String>) -> Unit
 ) {
-    val installedApps = remember {
-        val pm = context.packageManager
-        pm.getInstalledApplications(PackageManager.GET_META_DATA)
-            .filter { (it.flags and ApplicationInfo.FLAG_SYSTEM) == 0 }
-            .map { AppItemInfo(it.packageName, pm.getApplicationLabel(it).toString()) }
-            .sortedBy { it.appName }
+    var installedApps by remember { mutableStateOf<List<AppItemInfo>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+    var searchQuery by remember { mutableStateOf("") }
+    var tempSelected by remember { mutableStateOf(currentSelected) }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            val pm = context.packageManager
+            val ownPackage = context.packageName
+
+            // Query apps with launcher intents
+            val launcherIntent = Intent(Intent.ACTION_MAIN, null).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+            }
+            val launcherApps = pm.queryIntentActivities(launcherIntent, 0)
+                .mapNotNull { resolveInfo ->
+                    val pkg = resolveInfo.activityInfo.packageName
+                    if (pkg == ownPackage) return@mapNotNull null
+                    val label = resolveInfo.loadLabel(pm).toString()
+                    val icon = runCatching { resolveInfo.loadIcon(pm) }.getOrNull()
+                    AppItemInfo(packageName = pkg, appName = label, iconDrawable = icon)
+                }
+
+            // Query all installed applications to capture any remaining apps
+            val installedAppsRaw = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+                .filter { it.packageName != ownPackage }
+                .mapNotNull { appInfo ->
+                    val label = pm.getApplicationLabel(appInfo).toString()
+                    if (label.isBlank() || label == appInfo.packageName) null
+                    else {
+                        val icon = runCatching { pm.getApplicationIcon(appInfo) }.getOrNull()
+                        AppItemInfo(packageName = appInfo.packageName, appName = label, iconDrawable = icon)
+                    }
+                }
+
+            val combinedMap = (launcherApps + installedAppsRaw).associateBy { it.packageName }
+            val sortedList = combinedMap.values.sortedBy { it.appName.lowercase() }
+
+            withContext(Dispatchers.Main) {
+                installedApps = sortedList
+                isLoading = false
+            }
+        }
     }
 
-    var tempSelected by remember { mutableStateOf(currentSelected) }
+    val filteredApps = remember(installedApps, searchQuery) {
+        if (searchQuery.isBlank()) {
+            installedApps
+        } else {
+            installedApps.filter {
+                it.appName.contains(searchQuery, ignoreCase = true) ||
+                it.packageName.contains(searchQuery, ignoreCase = true)
+            }
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Select Applications") },
+        title = {
+            Column {
+                Text(
+                    text = "Select Applications",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "${tempSelected.size} selected",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        },
         text = {
-            LazyColumn(modifier = Modifier.height(300.dp)) {
-                items(installedApps) { app ->
-                    val isChecked = tempSelected.contains(app.packageName)
-                    Row(
+            Column(modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Search apps or package...") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Search"
+                        )
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(
+                                    imageVector = Icons.Default.Clear,
+                                    contentDescription = "Clear search"
+                                )
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp)
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (isLoading) {
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable {
-                                tempSelected = if (isChecked) tempSelected - app.packageName else tempSelected + app.packageName
-                            }
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .height(280.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Checkbox(
-                            checked = isChecked,
-                            onCheckedChange = { checked ->
-                                tempSelected = if (checked) tempSelected + app.packageName else tempSelected - app.packageName
-                            }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator()
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "Loading installed apps...",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                } else if (filteredApps.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(280.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No apps found.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text(app.appName, style = MaterialTheme.typography.bodyLarge)
-                            Text(app.packageName, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.height(280.dp)) {
+                        items(filteredApps, key = { it.packageName }) { app ->
+                            val isChecked = tempSelected.contains(app.packageName)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        tempSelected = if (isChecked) {
+                                            tempSelected - app.packageName
+                                        } else {
+                                            tempSelected + app.packageName
+                                        }
+                                    }
+                                    .padding(vertical = 6.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = isChecked,
+                                    onCheckedChange = { checked ->
+                                        tempSelected = if (checked) {
+                                            tempSelected + app.packageName
+                                        } else {
+                                            tempSelected - app.packageName
+                                        }
+                                    }
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+
+                                val bitmap = remember(app.packageName) {
+                                    val drawable = app.iconDrawable
+                                    if (drawable != null) {
+                                        runCatching {
+                                            if (drawable is android.graphics.drawable.BitmapDrawable) {
+                                                drawable.bitmap.asImageBitmap()
+                                            } else {
+                                                val bmp = android.graphics.Bitmap.createBitmap(
+                                                    drawable.intrinsicWidth.coerceAtLeast(1),
+                                                    drawable.intrinsicHeight.coerceAtLeast(1),
+                                                    android.graphics.Bitmap.Config.ARGB_8888
+                                                )
+                                                val canvas = android.graphics.Canvas(bmp)
+                                                drawable.setBounds(0, 0, canvas.width, canvas.height)
+                                                drawable.draw(canvas)
+                                                bmp.asImageBitmap()
+                                            }
+                                        }.getOrNull()
+                                    } else null
+                                }
+
+                                if (bitmap != null) {
+                                    Image(
+                                        bitmap = bitmap,
+                                        contentDescription = null,
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .clip(CircleShape)
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                }
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = app.appName,
+                                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold)
+                                    )
+                                    Text(
+                                        text = app.packageName,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
                         }
                     }
                 }

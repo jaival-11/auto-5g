@@ -14,6 +14,7 @@ import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,7 +24,6 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import me.jaival.auto5g.MainActivity
-import me.jaival.auto5g.R
 import me.jaival.auto5g.data.HotspotMode
 import me.jaival.auto5g.data.PermissionMode
 import me.jaival.auto5g.data.SettingsRepository
@@ -43,11 +43,17 @@ class Smart5GService : Service() {
     private lateinit var repository: SettingsRepository
 
     private var isScreenOn = true
+    private var effectiveScreenOn = true
     private var isHotspotActive = false
     private var currentLiveMbps = 0.0
 
     private var displayOffJob: Job? = null
     private var displayOnJob: Job? = null
+
+    // Smart switching sustained counters
+    private var highSpeedSecondsCounter = 0
+    private var lowSpeedSecondsCounter = 0
+    private var smartDesiredMode = NetworkModeController.NETWORK_MODE_4G_PREFERRED
 
     // State cached from DataStore
     private var masterEnabled = false
@@ -57,7 +63,8 @@ class Smart5GService : Service() {
     private var displayOnDelaySecs = 2
     private var smartSwitchingEnabled = true
     private var highMbpsThreshold = 5.0
-    private var lowMbpsThreshold = 1.0
+    private var highMbpsDurationSecs = 3
+    private var lowMbpsDurationSecs = 10
     private var whitelistPackages = emptySet<String>()
     private var blacklistPackages = emptySet<String>()
     private var hotspotTriggerEnabled = true
@@ -91,6 +98,10 @@ class Smart5GService : Service() {
         repository = SettingsRepository(applicationContext)
         createNotificationChannel()
 
+        val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        isScreenOn = powerManager?.isInteractive ?: true
+        effectiveScreenOn = isScreenOn
+
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
@@ -109,7 +120,7 @@ class Smart5GService : Service() {
         }
 
         startForegroundServiceNotification()
-        applyTargetMode(NetworkModeController.NETWORK_MODE_4G_PREFERRED, force = true)
+        evaluateAndApplyNetworkMode()
         return START_STICKY
     }
 
@@ -117,6 +128,7 @@ class Smart5GService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        releaseScreenOffWakeLock()
         try {
             unregisterReceiver(systemReceiver)
         } catch (e: Exception) {
@@ -175,7 +187,8 @@ class Smart5GService : Service() {
                 repository.displayOnDelaySecsFlow,
                 repository.smartSwitchingEnabledFlow,
                 repository.highMbpsThresholdFlow,
-                repository.lowMbpsThresholdFlow
+                repository.highMbpsDurationSecsFlow,
+                repository.lowMbpsDurationSecsFlow
             ) { flows: Array<Any?> ->
                 val newMaster = flows[0] as Boolean
                 permissionMode = flows[1] as PermissionMode
@@ -184,7 +197,8 @@ class Smart5GService : Service() {
                 displayOnDelaySecs = flows[4] as Int
                 smartSwitchingEnabled = flows[5] as Boolean
                 highMbpsThreshold = flows[6] as Double
-                lowMbpsThreshold = flows[7] as Double
+                highMbpsDurationSecs = flows[7] as Int
+                lowMbpsDurationSecs = flows[8] as Int
                 newMaster
             }.collectLatest { isMaster ->
                 val wasEnabled = masterEnabled
@@ -193,7 +207,7 @@ class Smart5GService : Service() {
                     stopSelf()
                 } else {
                     if (!wasEnabled) {
-                        applyTargetMode(NetworkModeController.NETWORK_MODE_4G_PREFERRED, force = true)
+                        evaluateAndApplyNetworkMode()
                     } else {
                         evaluateAndApplyNetworkMode()
                     }
@@ -225,9 +239,55 @@ class Smart5GService : Service() {
             TrafficMonitor.observeTrafficMbps(1000L).collect { mbps ->
                 currentLiveMbps = mbps
                 if (masterEnabled) {
+                    updateSmartSwitchingState(mbps)
                     evaluateAndApplyNetworkMode()
                 }
             }
+        }
+    }
+
+    private fun updateSmartSwitchingState(mbps: Double) {
+        if (mbps >= highMbpsThreshold) {
+            highSpeedSecondsCounter++
+            lowSpeedSecondsCounter = 0
+            if (highSpeedSecondsCounter >= highMbpsDurationSecs) {
+                smartDesiredMode = NetworkModeController.NETWORK_MODE_5G_PREFERRED
+            }
+        } else {
+            lowSpeedSecondsCounter++
+            highSpeedSecondsCounter = 0
+            if (lowSpeedSecondsCounter >= lowMbpsDurationSecs) {
+                smartDesiredMode = NetworkModeController.NETWORK_MODE_4G_PREFERRED
+            }
+        }
+    }
+
+    private var wakeLock: PowerManager.WakeLock? = null
+
+    private fun acquireScreenOffWakeLock(timeoutMs: Long) {
+        try {
+            if (wakeLock == null) {
+                val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+                wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Auto5G:ScreenOffDelayWakeLock")
+            }
+            wakeLock?.let {
+                if (it.isHeld) {
+                    it.release()
+                }
+                it.acquire(timeoutMs)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun releaseScreenOffWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -236,19 +296,43 @@ class Smart5GService : Service() {
         displayOnJob?.cancel()
 
         if (!displayTriggerEnabled) {
+            releaseScreenOffWakeLock()
+            effectiveScreenOn = screenOn
             evaluateAndApplyNetworkMode()
             return
         }
 
         if (screenOn) {
-            displayOnJob = serviceScope.launch {
-                delay(displayOnDelaySecs * 1000L)
+            releaseScreenOffWakeLock()
+            if (displayOnDelaySecs <= 0) {
+                effectiveScreenOn = true
                 evaluateAndApplyNetworkMode()
+            } else {
+                displayOnJob = serviceScope.launch {
+                    delay(displayOnDelaySecs * 1000L)
+                    effectiveScreenOn = true
+                    evaluateAndApplyNetworkMode()
+                }
             }
         } else {
-            displayOffJob = serviceScope.launch {
-                delay(displayOffDelaySecs * 1000L)
+            if (displayOffDelaySecs <= 0) {
+                acquireScreenOffWakeLock(3000L)
+                effectiveScreenOn = false
                 evaluateAndApplyNetworkMode()
+                serviceScope.launch {
+                    delay(1500L)
+                    releaseScreenOffWakeLock()
+                }
+            } else {
+                val delayMs = displayOffDelaySecs * 1000L
+                acquireScreenOffWakeLock(delayMs + 5000L)
+                displayOffJob = serviceScope.launch {
+                    delay(delayMs)
+                    effectiveScreenOn = false
+                    evaluateAndApplyNetworkMode()
+                    delay(1500L)
+                    releaseScreenOffWakeLock()
+                }
             }
         }
     }
@@ -281,40 +365,30 @@ class Smart5GService : Service() {
                 applyTargetMode(targetMode)
                 return
             } else if (hotspotMode == HotspotMode.SMART) {
-                if (currentLiveMbps >= highMbpsThreshold) {
-                    applyTargetMode(NetworkModeController.NETWORK_MODE_5G_PREFERRED)
-                    return
-                } else if (currentLiveMbps <= lowMbpsThreshold) {
-                    applyTargetMode(NetworkModeController.NETWORK_MODE_4G_PREFERRED)
-                    return
-                }
+                applyTargetMode(smartDesiredMode)
+                return
             }
         }
 
-        // 3. Smart Switching Traffic rules (Screen Off Heavy Download Exception)
-        if (!isScreenOn && smartSwitchingEnabled && currentLiveMbps >= highMbpsThreshold) {
-            applyTargetMode(NetworkModeController.NETWORK_MODE_5G_PREFERRED)
-            return
-        }
-
-        // 4. Display state rules
-        if (displayTriggerEnabled && !isScreenOn) {
+        // 3. Display Trigger & Screen Off Rules
+        if (displayTriggerEnabled && !effectiveScreenOn) {
+            // Heavy bandwidth download exception during Screen Off
+            if (smartSwitchingEnabled && (smartDesiredMode == NetworkModeController.NETWORK_MODE_5G_PREFERRED || currentLiveMbps >= highMbpsThreshold)) {
+                applyTargetMode(NetworkModeController.NETWORK_MODE_5G_PREFERRED)
+                return
+            }
+            // Otherwise, switch to 4G when screen is off
             applyTargetMode(NetworkModeController.NETWORK_MODE_4G_PREFERRED)
             return
         }
 
-        // 5. Smart Switching default rules during Display ON
+        // 4. Smart Switching default rules during Display ON
         if (smartSwitchingEnabled) {
-            if (currentLiveMbps >= highMbpsThreshold) {
-                applyTargetMode(NetworkModeController.NETWORK_MODE_5G_PREFERRED)
-                return
-            } else if (currentLiveMbps <= lowMbpsThreshold) {
-                applyTargetMode(NetworkModeController.NETWORK_MODE_4G_PREFERRED)
-                return
-            }
+            applyTargetMode(smartDesiredMode)
+            return
         }
 
-        // Default when display is ON and no heavy traffic: 5G Preferred
+        // Default when display is ON and smart switching disabled: 5G Preferred
         applyTargetMode(NetworkModeController.NETWORK_MODE_5G_PREFERRED)
     }
 
@@ -334,7 +408,7 @@ class Smart5GService : Service() {
         val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
             ?: return null
         val time = System.currentTimeMillis()
-        val events = usageStatsManager.queryEvents(time - 5000, time)
+        val events = usageStatsManager.queryEvents(time - 10000, time)
         var lastForegroundApp: String? = null
         val event = UsageEvents.Event()
         while (events.hasNextEvent()) {
@@ -346,3 +420,4 @@ class Smart5GService : Service() {
         return lastForegroundApp
     }
 }
+

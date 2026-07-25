@@ -30,6 +30,8 @@ class SettingsRepository(private val context: Context) {
         val SMART_SWITCHING_ENABLED = booleanPreferencesKey("smart_switching_enabled")
         val HIGH_MBPS_THRESHOLD = doublePreferencesKey("high_mbps_threshold")
         val LOW_MBPS_THRESHOLD = doublePreferencesKey("low_mbps_threshold")
+        val HIGH_MBPS_DURATION_SECS = intPreferencesKey("high_mbps_duration_secs")
+        val LOW_MBPS_DURATION_SECS = intPreferencesKey("low_mbps_duration_secs")
 
         val WHITELIST_PACKAGES = stringSetPreferencesKey("whitelist_packages")
         val BLACKLIST_PACKAGES = stringSetPreferencesKey("blacklist_packages")
@@ -78,6 +80,14 @@ class SettingsRepository(private val context: Context) {
 
     val lowMbpsThresholdFlow: Flow<Double> = context.dataStore.data.map { prefs ->
         prefs[LOW_MBPS_THRESHOLD] ?: 1.0
+    }
+
+    val highMbpsDurationSecsFlow: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[HIGH_MBPS_DURATION_SECS] ?: 3
+    }
+
+    val lowMbpsDurationSecsFlow: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[LOW_MBPS_DURATION_SECS] ?: 10
     }
 
     val whitelistPackagesFlow: Flow<Set<String>> = context.dataStore.data.map { prefs ->
@@ -147,6 +157,14 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setLowMbpsThreshold(threshold: Double) {
         context.dataStore.edit { prefs -> prefs[LOW_MBPS_THRESHOLD] = threshold }
+    }
+
+    suspend fun setHighMbpsDurationSecs(secs: Int) {
+        context.dataStore.edit { prefs -> prefs[HIGH_MBPS_DURATION_SECS] = secs }
+    }
+
+    suspend fun setLowMbpsDurationSecs(secs: Int) {
+        context.dataStore.edit { prefs -> prefs[LOW_MBPS_DURATION_SECS] = secs }
     }
 
     suspend fun setWhitelistPackages(packages: Set<String>) {
