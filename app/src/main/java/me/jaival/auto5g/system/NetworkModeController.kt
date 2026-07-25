@@ -74,15 +74,16 @@ object NetworkModeController {
     fun setNetworkMode(context: Context, mode: Int, permissionMode: PermissionMode): Boolean {
         Log.d(TAG, "setNetworkMode requested with mode: $mode, permissionMode: $permissionMode")
         val validSubId = getValidSubId(context)
-        val bitmask = mapModeToBitmask(mode)
 
         var shizukuSuccess = false
         if (ShizukuManager.isShizukuAvailable() && ShizukuManager.hasShizukuPermission()) {
-            shizukuSuccess = setNetworkModeViaShizuku(context, mode)
-            Log.d(TAG, "Shizuku IPC setNetworkMode result: $shizukuSuccess")
+            val (cmdSuccess, verifTechs) = ShizukuManager.setAllowedNetworkTypesViaCmdPhone(context, validSubId, mode)
+            Log.d(TAG, "cmd phone setAllowedNetworkTypes result: $cmdSuccess, verification techs: '$verifTechs'")
             
-            val shellSuccess = ShizukuManager.executeNetworkModeShellCommands(context, validSubId, mode, bitmask)
-            Log.d(TAG, "Shizuku Shell commands result: $shellSuccess")
+            val ipcSuccess = setNetworkModeViaShizuku(context, mode)
+            Log.d(TAG, "Shizuku IPC setNetworkMode result: $ipcSuccess")
+            
+            shizukuSuccess = cmdSuccess || ipcSuccess
         }
         
         val settingsSuccess = setNetworkModeViaSettingsGlobal(context, mode)
@@ -91,27 +92,19 @@ object NetworkModeController {
         return shizukuSuccess || settingsSuccess
     }
 
-    private fun mapModeToBitmask(mode: Int): Long {
-        val gsm = 32843L
-        val wcdma = 93112L
-        val lte = 397312L
-        val nr = 524288L
-
-        return when (mode) {
-            9 -> lte or wcdma or gsm
-            26 -> nr or lte or wcdma or gsm
-            23 -> nr
-            11 -> 4096L
-            else -> lte or wcdma or gsm
-        }
-    }
-
     fun getCurrentNetworkMode(context: Context): Int {
         Log.d(TAG, "getCurrentNetworkMode called")
         if (ShizukuManager.isShizukuAvailable() && ShizukuManager.hasShizukuPermission()) {
+            val activeSubId = getValidSubId(context)
+            val cmdTechs = ShizukuManager.getAllowedNetworkTypesViaCmdPhone(context, activeSubId)
+            val cmdMode = ShizukuManager.parseAllowedTechsToMode(cmdTechs)
+            if (cmdMode != -1) {
+                Log.d(TAG, "getCurrentNetworkMode from cmd phone: $cmdMode (techs: '$cmdTechs')")
+                return cmdMode
+            }
+
             if (cachedShizukuService?.asBinder()?.pingBinder() == true) {
                 try {
-                    val activeSubId = getValidSubId(context)
                     val shizukuMode = cachedShizukuService?.getCurrentNetworkMode(activeSubId) ?: -1
                     Log.d(TAG, "getCurrentNetworkMode from cached Shizuku: $shizukuMode (subId: $activeSubId)")
                     if (shizukuMode != -1) return shizukuMode

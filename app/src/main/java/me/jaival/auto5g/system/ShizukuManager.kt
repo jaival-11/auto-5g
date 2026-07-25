@@ -41,6 +41,21 @@ object ShizukuManager {
         }
     }
 
+    fun getSlotIndex(context: Context, subId: Int): Int {
+        return try {
+            val subManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? android.telephony.SubscriptionManager
+            val info = subManager?.getActiveSubscriptionInfo(subId)
+            if (info != null && info.simSlotIndex != android.telephony.SubscriptionManager.INVALID_SIM_SLOT_INDEX) {
+                info.simSlotIndex
+            } else {
+                val slot = android.telephony.SubscriptionManager.getSlotIndex(subId)
+                if (slot != android.telephony.SubscriptionManager.INVALID_SIM_SLOT_INDEX && slot >= 0) slot else 0
+            }
+        } catch (e: Throwable) {
+            0
+        }
+    }
+
     fun grantSecureSettingsViaShizuku(context: Context): Boolean {
         if (!hasShizukuPermission()) return false
         val pkg = context.packageName
@@ -51,24 +66,56 @@ object ShizukuManager {
         return executeShellCommands(cmds)
     }
 
-    fun executeNetworkModeShellCommands(context: Context, subId: Int, mode: Int, bitmask: Long): Boolean {
-        if (!hasShizukuPermission()) return false
-        val prefer5g = if (mode == 9) 0 else 1
+    fun setAllowedNetworkTypesViaCmdPhone(context: Context, subId: Int, mode: Int): Pair<Boolean, String> {
+        if (!hasShizukuPermission()) return Pair(false, "Shizuku permission not granted")
+
+        val slotIndex = getSlotIndex(context, subId)
+        val bitmaskStr = when (mode) {
+            NetworkModeController.NETWORK_MODE_4G_PREFERRED -> "01001111101111111111" // NR disabled (01001111101111111111)
+            NetworkModeController.NETWORK_MODE_5G_PREFERRED -> "11001111101111111111" // NR enabled (11001111101111111111)
+            NetworkModeController.NETWORK_MODE_STRICT_5G_ONLY -> "10000000000000000000" // NR only (10000000000000000000)
+            11 -> "01000001000000000000" // LTE only
+            else -> "01001111101111111111"
+        }
+
+        val prefer5g = if (mode == NetworkModeController.NETWORK_MODE_4G_PREFERRED) 0 else 1
+        val setCmd = "cmd phone set-allowed-network-types-for-users -s $slotIndex $bitmaskStr"
+        val getCmd = "cmd phone get-allowed-network-types-for-users -s $slotIndex"
+
         val cmds = listOf(
             "settings put global preferred_network_mode $mode",
             "settings put global preferred_network_mode$subId $mode",
-            "settings put global user_preferred_network_mode $mode",
-            "settings put global user_preferred_network_mode$subId $mode",
             "settings put global prefer_5g $prefer5g",
             "settings put global five_g_service $prefer5g",
             "settings put global five_g_mode $prefer5g",
-            "settings put secure prefer_5g $prefer5g",
-            "cmd telephony set-allowed-network-types -s $subId $bitmask",
-            "cmd telephony set-preferred-network-type -s $subId $mode",
-            "cmd telephony set-allowed-network-types $bitmask",
-            "cmd telephony set-preferred-network-type $mode"
+            setCmd
         )
-        return executeShellCommands(cmds)
+        executeShellCommands(cmds)
+
+        val verificationOutput = executeShellCommandWithOutput(getCmd)
+        android.util.Log.d("ShizukuManager", "cmd phone set executed on slot $slotIndex with bitmask $bitmaskStr. Verification output: '$verificationOutput'")
+
+        val success = verificationOutput.isNotEmpty() && !verificationOutput.contains("failed", ignoreCase = true)
+        return Pair(success, verificationOutput)
+    }
+
+    fun getAllowedNetworkTypesViaCmdPhone(context: Context, subId: Int): String {
+        if (!hasShizukuPermission()) return ""
+        val slotIndex = getSlotIndex(context, subId)
+        val getCmd = "cmd phone get-allowed-network-types-for-users -s $slotIndex"
+        return executeShellCommandWithOutput(getCmd)
+    }
+
+    fun parseAllowedTechsToMode(techs: String): Int {
+        if (techs.isEmpty() || techs.contains("failed", ignoreCase = true)) return -1
+        val hasNr = techs.contains("NR", ignoreCase = false)
+        val hasLte = techs.contains("LTE", ignoreCase = false)
+        return when {
+            hasNr && !hasLte -> NetworkModeController.NETWORK_MODE_STRICT_5G_ONLY
+            hasNr && hasLte -> NetworkModeController.NETWORK_MODE_5G_PREFERRED
+            !hasNr && hasLte -> NetworkModeController.NETWORK_MODE_4G_PREFERRED
+            else -> NetworkModeController.NETWORK_MODE_4G_PREFERRED
+        }
     }
 
     fun executeShellCommands(commands: List<String>): Boolean {
@@ -95,5 +142,36 @@ object ShizukuManager {
             false
         }
     }
+
+    fun executeShellCommandWithOutput(command: String): String {
+        return try {
+            val method = Shizuku::class.java.getDeclaredMethod(
+                "newProcess",
+                Array<String>::class.java,
+                Array<String>::class.java,
+                String::class.java
+            )
+            method.isAccessible = true
+            val process = method.invoke(null, arrayOf("sh"), null, null) as java.lang.Process
+            val os: OutputStream = process.outputStream
+            os.write("$command\n".toByteArray(Charsets.UTF_8))
+            os.write("exit\n".toByteArray(Charsets.UTF_8))
+            os.flush()
+            os.close()
+
+            val reader = java.io.BufferedReader(java.io.InputStreamReader(process.inputStream))
+            val output = StringBuilder()
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                output.append(line).append("\n")
+            }
+            process.waitFor()
+            output.toString().trim()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            ""
+        }
+    }
 }
+
 
